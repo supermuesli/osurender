@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"io/ioutil"
 	"time"
 	"os"
 	"image"
@@ -10,7 +11,27 @@ import (
 	"github.com/faiface/pixel"
 	"github.com/faiface/pixel/pixelgl"
 	"github.com/faiface/pixel/imdraw"
+	"github.com/Mempler/rplpa"
 )
+
+const (
+	cursorTrailBufferSize = 40 // has to be divisible by 2
+	cursorSize = 40
+)
+
+func (canvas *Canvas) ReadReplay(path string) {
+	buf, err := ioutil.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+
+	replay, err := rplpa.ParseReplay(buf)
+	if err != nil {
+		panic(err)
+	}
+
+	canvas.Replay = replay
+}
 
 // Canvas 
 type Canvas struct {
@@ -27,12 +48,22 @@ type Canvas struct {
 	frames [][]uint8
 
 	imd *imdraw.IMDraw
+
+	Replay *rplpa.Replay
+
+	Tick int
+
+	cursorTrailBuffer *ringBuffer
+	cursorTrailBufferSize int
+	cursorColor [2]pixel.RGBA
+
+	ScreenScale pixel.Vec
 }
 
 // NewCanvas prepares a new Canvas
 func NewCanvas(width float64, height float64) *Canvas {
 	cfg := pixelgl.WindowConfig {
-		Title:  "anim8",
+		Title:  "osurender",
 		Bounds: pixel.R(0, 0, width, height),
 		VSync:  false,
 	}
@@ -45,6 +76,7 @@ func NewCanvas(width float64, height float64) *Canvas {
 	win.Canvas().SetSmooth(true)
 	win.SetCursorVisible(false)
 
+
 	canvas := Canvas {
 		win,
 		cfg.Title,
@@ -52,34 +84,57 @@ func NewCanvas(width float64, height float64) *Canvas {
 		height,
 		time.Tick(time.Second / 60),
 		[][]uint8{},
-		imdraw.New(nil)
+		imdraw.New(nil),
+		nil,
+		0,
+		&ringBuffer{[cursorTrailBufferSize]pixel.Vec{}, 0},
+		cursorTrailBufferSize,
+		[2]pixel.RGBA{pixel.RGB(0, 1, 0),pixel.RGB(0, 0.5, 1)},
+		pixel.V(1, 1),
 	}
-
-	canvas.imd.Color = pixel.RGB(1, 0, 0)
 
 	return &canvas
 }
 
-// Circle 
-func (canvas *Canvas) Circle(v pixel.Vec) {
-	canvas.imd.Push(v)
+type ringBuffer struct {
+	vs [cursorTrailBufferSize]pixel.Vec
+	index int
 }
 
-func (canvas *Canvas) buildFrame() {
-	// clear screen except for canvas
-	canvas.Win.Clear(colornames.Black)
-	canvas.batch.Draw(canvas.Win)
-	canvas.Win.Update()
-
-	// now get canvas pixels
-	canv := canvas.Win.Canvas()
-	pixels := canv.Pixels()
-
-	if canvas.curBatch < len(canvas.frames) {
-		canvas.frames[canvas.curBatch] = pixels		
+func (r *ringBuffer) add(v pixel.Vec) {
+	if r.index < cursorTrailBufferSize-2 {
+		r.vs[r.index] = v
+		r.index++
 	} else {
-		// this is so we can dump the frame without GUI as a PNG later
-		canvas.frames = append(canvas.frames, pixels)
+		for i := 0; i < r.index; i++ {
+			r.vs[i] = r.vs[i+1]
+		}
+		r.vs[r.index] = v
+	}
+}
+
+func (r *ringBuffer) clear() {
+	r.index = 0
+	r.vs = [cursorTrailBufferSize]pixel.Vec{}
+}
+
+// Cursor 
+func (canvas *Canvas) Cursor(v pixel.Vec, size float64) {
+	canvas.imd.Push(v)
+	canvas.imd.Circle(size, 0)
+	canvas.imd.Draw(canvas.Win)
+}
+
+func (canvas *Canvas) Trail() {
+	canvas.imd.Clear()
+	canvas.imd.EndShape = imdraw.RoundEndShape
+
+	// draw cursor trail
+	for i := 1; i < cursorTrailBufferSize-1 ; i++ {
+		canvas.imd.Color = pixel.RGB(0, float64(i)/float64(cursorTrailBufferSize), float64(i)/float64(cursorTrailBufferSize))
+		canvas.imd.Push(canvas.cursorTrailBuffer.vs[i])
+		canvas.imd.Push(canvas.cursorTrailBuffer.vs[i-1])
+		canvas.imd.Line(float64(cursorSize + i*(cursorSize-1)/cursorTrailBufferSize))
 	}
 }
 
@@ -104,99 +159,59 @@ func (canvas *Canvas) Dump(replayName string) {
 		}
 	}
 }
+func (canvas *Canvas) DrawCursor() {
+	// update cursor trail buffer interpolation points
+	v := pixel.V(float64(canvas.Replay.ReplayData[canvas.Tick].MosueX), float64(canvas.Replay.ReplayData[canvas.Tick].MouseY))
+	canvas.cursorTrailBuffer.add(v.ScaledXY(canvas.ScreenScale))
+	
+
+	// draw cursor trail
+	canvas.Trail()
+	
+	// set cursor color
+	if canvas.Replay.ReplayData[canvas.Tick].KeyPressed.LeftClick || canvas.Replay.ReplayData[canvas.Tick].KeyPressed.RightClick {
+		canvas.imd.Color = canvas.cursorColor[1]
+	}
+
+	// draw cursor at parsed location
+	canvas.Cursor(v.ScaledXY(canvas.ScreenScale), float64(cursorSize))
+}
 
 // Poll user input
 func (canvas *Canvas) Poll() {
-		
-	if canvas.Win.JustPressed(pixelgl.KeyLeft) {
-		if canvas.curBatch > 0 {
-			canvas.buildFrame()
-			canvas.curBatch--
-			canvas.batch = canvas.batches[canvas.curBatch]
-		}
-	}
-	if canvas.Win.JustPressed(pixelgl.KeyRight) {
-		if canvas.curBatch < len(canvas.batches) - 1 {
-			canvas.buildFrame()
-			canvas.curBatch++
-			canvas.batch = canvas.batches[canvas.curBatch]
-		}	
-	}
 
 	// play animation at keypress P
 	if canvas.Win.JustPressed(pixelgl.KeyP) {
 		
-		canv := canvas.Win.Canvas()
-		
-		// show animation at 15 FPS
-		fps15 := time.Tick(time.Second/time.Duration(canvas.playbackFPS))
-		for i := 0; i < len(canvas.frames); i++ {
-			canv.SetPixels(canvas.frames[i])
-			canvas.Win.Update()
-			// note that canvas.Win.Update also calls
-			// canvas.Win.UpdateInput() along with it
-			
+		for {
+			canvas.Win.UpdateInput()
+
 			if canvas.Win.JustPressed(pixelgl.KeyP) {
 				break
 			}
-			<-fps15
-		}
-	}
 
-	// loop at keypress L
-	if canvas.Win.JustPressed(pixelgl.KeyL) {
-
-		canv := canvas.Win.Canvas()
-		skipped := false
-		
-		for {
-			// show animation at 15 FPS
-			fps15 := time.Tick(time.Second/time.Duration(canvas.playbackFPS))
-			for i := 0; i < len(canvas.frames); i++ {
-				canv.SetPixels(canvas.frames[i])
-
-				canvas.Win.Update()
-				// note that canvas.Win.Update also calls
-				// canvas.Win.UpdateInput() along with it
-
-				if canvas.Win.JustPressed(pixelgl.KeyL) {
-					skipped = true
-					break
-				}	
-				if canvas.Win.Pressed(pixelgl.KeyUp) {
-					canvas.playbackFPS = canvas.playbackFPS + 1
-				}
-				if canvas.Win.Pressed(pixelgl.KeyDown) {
-					canvas.playbackFPS = canvas.playbackFPS - 1
-					if canvas.playbackFPS < 5 {
-						canvas.playbackFPS = 5
-					}
-				}
-				<-fps15
-			}
-
-			if skipped || canvas.Win.JustPressed(pixelgl.KeyL) {
-				break
-			}	
-			
-			if canvas.Win.Pressed(pixelgl.KeyUp) {
-				canvas.playbackFPS = canvas.playbackFPS + 1
-			}
-			
-			if canvas.Win.Pressed(pixelgl.KeyDown) {
-				canvas.playbackFPS = canvas.playbackFPS - 1
-				if canvas.playbackFPS < 5 {
-					canvas.playbackFPS = 5
+			if canvas.Win.Pressed(pixelgl.KeyLeft) {
+				if canvas.Tick > 0 {
+					canvas.Tick--
+					canvas.Draw()
 				}
 			}
+
+			if canvas.Win.Pressed(pixelgl.KeyRight) {
+				if canvas.Tick < len(canvas.Replay.ReplayData) {
+					canvas.Tick++
+					canvas.Draw()
+				}
+			}
+
 			<-canvas.FPS
-		}		
+		}
 	}
 
 
 	// dump animation at keypress ENTER
 	if canvas.Win.JustPressed(pixelgl.KeyEnter) {
-		replayName := ""
+		replayName := "arsch"
 		canvas.Dump(replayName)
 	}
 
@@ -207,8 +222,9 @@ func (canvas *Canvas) Poll() {
 
 // Draw renders the canvas onto the window
 func (canvas *Canvas) Draw() {
-	canvas.Win.Clear()
-	canvas.imd.Draw()
+	canvas.Win.Clear(pixel.RGB(0, 0, 0))
+	canvas.DrawCursor()
+	canvas.imd.Draw(canvas.Win)
 	canvas.Win.Update()
 	canvas.imd.Clear()
 }

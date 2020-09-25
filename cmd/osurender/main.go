@@ -1,6 +1,7 @@
 package main
 
-import (
+import (	
+	"github.com/faiface/pixel"
 	"github.com/faiface/pixel/pixelgl"
 	"github.com/kbinani/screenshot"
 
@@ -15,14 +16,32 @@ func run() {
 
 	// initialize new canvas
 	canvas := render.NewCanvas(width, height)
+	canvas.ReadReplay("replay1.osr")
+
+	maxCoordX := float32(0.0)
+	maxCoordY := float32(0.0)
+	for i := 0; i < len(canvas.Replay.ReplayData); i++ {
+		if canvas.Replay.ReplayData[i].MosueX > maxCoordX {
+			maxCoordX = canvas.Replay.ReplayData[i].MosueX
+		}
+		if canvas.Replay.ReplayData[i].MouseY > maxCoordY {
+			maxCoordY = canvas.Replay.ReplayData[i].MouseY
+		}
+	}
+
+	canvas.ScreenScale = pixel.V(width/float64(maxCoordX), height/float64(maxCoordY))
 
 	// render loop
 	for !canvas.Win.Closed() {
-		canvas.Poll()
-		canvas.Draw()		
-		
-		// manually enforce FPS
-		<-canvas.FPS
+		canvas.Tick = 0
+		for i := 0; i < len(canvas.Replay.ReplayData); i++ {
+			canvas.Poll()
+			canvas.Draw()
+
+			// manually enforce FPS
+			<-canvas.FPS
+			canvas.Tick++
+		}		
 	}
 }
 
