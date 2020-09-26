@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	cursorTrailBufferSize = 40 // has to be divisible by 2
-	cursorSize = 40
+	cursorTrailBufferSize = 50 // has to be divisible by 2
+	cursorSize = 25
 )
 
 func (canvas *Canvas) ReadReplay(path string) {
@@ -89,7 +89,7 @@ func NewCanvas(width float64, height float64) *Canvas {
 		0,
 		&ringBuffer{[cursorTrailBufferSize]pixel.Vec{}, 0},
 		cursorTrailBufferSize,
-		[2]pixel.RGBA{pixel.RGB(0, 1, 0),pixel.RGB(0, 0.5, 1)},
+		[2]pixel.RGBA{pixel.RGB(1, 1, 0),pixel.RGB(0, 0.5, 1)},
 		pixel.V(1, 1),
 	}
 
@@ -131,10 +131,10 @@ func (canvas *Canvas) Trail() {
 
 	// draw cursor trail
 	for i := 1; i < cursorTrailBufferSize-1 ; i++ {
-		canvas.imd.Color = pixel.RGB(0, float64(i)/float64(cursorTrailBufferSize), float64(i)/float64(cursorTrailBufferSize))
+		canvas.imd.Color = pixel.RGB(float64(i)/float64(cursorTrailBufferSize*1.3), 0, float64(i)/float64(cursorTrailBufferSize*1.3))
 		canvas.imd.Push(canvas.cursorTrailBuffer.vs[i])
 		canvas.imd.Push(canvas.cursorTrailBuffer.vs[i-1])
-		canvas.imd.Line(float64(cursorSize + i*(cursorSize-1)/cursorTrailBufferSize))
+		canvas.imd.Line(float64(cursorSize + i*(cursorSize)/(cursorTrailBufferSize)))
 	}
 }
 
@@ -159,9 +159,11 @@ func (canvas *Canvas) Dump(replayName string) {
 		}
 	}
 }
+
 func (canvas *Canvas) DrawCursor() {
 	// update cursor trail buffer interpolation points
-	v := pixel.V(float64(canvas.Replay.ReplayData[canvas.Tick].MosueX), float64(canvas.Replay.ReplayData[canvas.Tick].MouseY))
+	v := pixel.V(float64(canvas.Replay.ReplayData[canvas.Tick].MosueX), float64(canvas.Replay.ReplayData[canvas.Tick].MouseY) - canvas.Win.GetPos().Y)
+	fmt.Println(v.ScaledXY(canvas.ScreenScale))
 	canvas.cursorTrailBuffer.add(v.ScaledXY(canvas.ScreenScale))
 	
 
@@ -170,7 +172,7 @@ func (canvas *Canvas) DrawCursor() {
 	
 	// set cursor color
 	if canvas.Replay.ReplayData[canvas.Tick].KeyPressed.LeftClick || canvas.Replay.ReplayData[canvas.Tick].KeyPressed.RightClick {
-		canvas.imd.Color = canvas.cursorColor[1]
+		canvas.imd.Color = canvas.cursorColor[0]
 	}
 
 	// draw cursor at parsed location

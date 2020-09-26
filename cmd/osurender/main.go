@@ -11,8 +11,8 @@ import (
 func run() {
 	// get display dimensions
 	bounds := screenshot.GetDisplayBounds(0)
-	width := float64(bounds.Dx())
-	height := float64(bounds.Dy())
+	width := float64(bounds.Dx())*0.98
+	height := float64(bounds.Dy())*0.98
 
 	// initialize new canvas
 	canvas := render.NewCanvas(width, height)
@@ -29,20 +29,19 @@ func run() {
 		}
 	}
 
-	canvas.ScreenScale = pixel.V(width/float64(maxCoordX), height/float64(maxCoordY))
-
+	canvas.ScreenScale = pixel.V(height/float64(maxCoordY), height/float64(maxCoordY))
 	// render loop
-	for !canvas.Win.Closed() {
-		canvas.Tick = 0
-		for i := 0; i < len(canvas.Replay.ReplayData); i++ {
-			canvas.Poll()
-			canvas.Draw()
+	//for !canvas.Win.Closed() {
+	//	canvas.Tick = 0
+	for i := 0; i < len(canvas.Replay.ReplayData); i++ {
+		canvas.Poll()
+		canvas.Draw()
 
-			// manually enforce FPS
-			<-canvas.FPS
-			canvas.Tick++
-		}		
-	}
+		// manually enforce FPS
+		<-canvas.FPS
+		canvas.Tick++
+	}		
+	//}
 }
 
 func main() {
